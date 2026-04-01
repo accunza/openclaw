@@ -11,9 +11,15 @@ export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
   type: "model.usage";
   sessionKey?: string;
   sessionId?: string;
+  taskId?: string;
+  agentId?: string;
+  spawnDepth?: number;
   channel?: string;
   provider?: string;
   model?: string;
+  thinkLevel?: string;
+  reasoningLevel?: string;
+  thinkingTokens?: number | null;
   usage: {
     input?: number;
     output?: number;
@@ -35,6 +41,23 @@ export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
   };
   costUsd?: number;
   durationMs?: number;
+};
+
+export type DiagnosticModelErrorEvent = DiagnosticBaseEvent & {
+  type: "model.error";
+  sessionKey?: string;
+  sessionId?: string;
+  taskId?: string;
+  agentId?: string;
+  spawnDepth?: number;
+  provider?: string;
+  model?: string;
+  thinkLevel?: string;
+  reasoningLevel?: string;
+  durationMs?: number;
+  errorKind: string;
+  errorReason?: string;
+  errorMessage: string;
 };
 
 export type DiagnosticWebhookReceivedEvent = DiagnosticBaseEvent & {
@@ -64,6 +87,9 @@ export type DiagnosticMessageQueuedEvent = DiagnosticBaseEvent & {
   type: "message.queued";
   sessionKey?: string;
   sessionId?: string;
+  taskId?: string;
+  agentId?: string;
+  spawnDepth?: number;
   channel?: string;
   source: string;
   queueDepth?: number;
@@ -149,6 +175,7 @@ export type DiagnosticToolLoopEvent = DiagnosticBaseEvent & {
 
 export type DiagnosticEventPayload =
   | DiagnosticUsageEvent
+  | DiagnosticModelErrorEvent
   | DiagnosticWebhookReceivedEvent
   | DiagnosticWebhookProcessedEvent
   | DiagnosticWebhookErrorEvent

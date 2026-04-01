@@ -23,6 +23,7 @@ import { formatConfigIssueLines } from "../config/issue-format.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import { resolveMainSessionKey } from "../config/sessions.js";
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
+import { startCallTraceWriter } from "../infra/call-trace-writer.js";
 import {
   ensureControlUiAssetsBuilt,
   isPackageProvenControlUiRootSync,
@@ -517,6 +518,8 @@ export async function startGatewayServer(
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
   }
+  let stopCallTraceWriter = () => {};
+  stopCallTraceWriter = startCallTraceWriter(cfgAtStart);
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(
     () => getTotalQueueSize() + getTotalPendingReplies() + getActiveEmbeddedRunCount(),
@@ -760,6 +763,7 @@ export async function startGatewayServer(
     if (diagnosticsEnabled) {
       stopDiagnosticHeartbeat();
     }
+    stopCallTraceWriter();
     if (skillsRefreshTimer) {
       clearTimeout(skillsRefreshTimer);
       skillsRefreshTimer = null;
@@ -1480,6 +1484,7 @@ export async function startGatewayServer(
       if (diagnosticsEnabled) {
         stopDiagnosticHeartbeat();
       }
+      stopCallTraceWriter();
       if (skillsRefreshTimer) {
         clearTimeout(skillsRefreshTimer);
         skillsRefreshTimer = null;

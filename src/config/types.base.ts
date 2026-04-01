@@ -229,6 +229,23 @@ export type WebConfig = {
 // Provider docking: allowlists keyed by provider id (and internal "webchat").
 export type AgentElevatedAllowFromConfig = Partial<Record<string, Array<string | number>>>;
 
+export type TelemetryCallsConfig = {
+  enabled?: boolean;
+  dir?: string;
+  retainDays?: number;
+};
+
+export type TelemetryFlowsConfig = {
+  enabled?: boolean;
+  dir?: string;
+  retainDays?: number;
+};
+
+export type TelemetryConfig = {
+  calls?: TelemetryCallsConfig;
+  flows?: TelemetryFlowsConfig;
+};
+
 export type IdentityConfig = {
   name?: string;
   theme?: string;

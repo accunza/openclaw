@@ -8,6 +8,7 @@ export type SpawnedRunMetadata = {
   groupChannel?: string | null;
   groupSpace?: string | null;
   workspaceDir?: string | null;
+  taskId?: string | null;
 };
 
 export type SpawnedToolContext = {

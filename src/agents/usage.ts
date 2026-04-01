@@ -24,6 +24,9 @@ export type UsageLike = {
   total_tokens?: number;
   cache_read?: number;
   cache_write?: number;
+  thinkingTokens?: number | null;
+  thinking_tokens?: number | null;
+  thinking?: { tokens?: number | null } | null;
 };
 
 export type NormalizedUsage = {
@@ -32,6 +35,7 @@ export type NormalizedUsage = {
   cacheRead?: number;
   cacheWrite?: number;
   total?: number;
+  thinkingTokens?: number | undefined;
 };
 
 export type AssistantUsageSnapshot = {
@@ -115,13 +119,20 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     raw.cacheWrite ?? raw.cache_write ?? raw.cache_creation_input_tokens,
   );
   const total = asFiniteNumber(raw.total ?? raw.totalTokens ?? raw.total_tokens);
+  const thinkingTokens = asFiniteNumber(
+    ((raw as Record<string, unknown>).thinking_tokens as number | undefined) ??
+      ((raw as Record<string, unknown>).thinkingTokens as number | undefined) ??
+      ((raw as Record<string, unknown>).thinking as { tokens?: number | null } | null | undefined)
+        ?.tokens,
+  );
 
   if (
     input === undefined &&
     output === undefined &&
     cacheRead === undefined &&
     cacheWrite === undefined &&
-    total === undefined
+    total === undefined &&
+    thinkingTokens === undefined
   ) {
     return undefined;
   }
@@ -132,6 +143,7 @@ export function normalizeUsage(raw?: UsageLike | null): NormalizedUsage | undefi
     cacheRead,
     cacheWrite,
     total,
+    thinkingTokens,
   };
 }
 

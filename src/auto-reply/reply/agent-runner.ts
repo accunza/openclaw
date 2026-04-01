@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
@@ -162,6 +163,7 @@ export async function runReplyAgent(params: {
   );
   const applyReplyToMode = createReplyToModeFilterForChannel(replyToMode, replyToChannel);
   const cfg = followupRun.run.config;
+  const currentTaskId = activeSessionEntry?.taskId ?? crypto.randomBytes(6).toString("hex");
   const normalizeReplyMediaPaths = createReplyMediaPathNormalizer({
     cfg,
     sessionKey,
@@ -185,6 +187,20 @@ export async function runReplyAgent(params: {
           buffer: createAudioAsVoiceBuffer({ isAudioPayload }),
         })
       : null;
+  if (activeSessionEntry && !activeSessionEntry.taskId) {
+    activeSessionEntry.taskId = currentTaskId;
+    if (activeSessionStore && sessionKey) {
+      activeSessionStore[sessionKey] = activeSessionEntry;
+    }
+    if (storePath && sessionKey) {
+      await updateSessionStoreEntry({
+        storePath,
+        sessionKey,
+        update: async () => ({ taskId: currentTaskId }),
+      });
+    }
+  }
+
   const touchActiveSessionEntry = async () => {
     if (!activeSessionEntry || !activeSessionStore || !sessionKey) {
       return;
@@ -401,29 +417,62 @@ export async function runReplyAgent(params: {
     });
   try {
     const runStartedAt = Date.now();
-    const runOutcome = await runAgentTurnWithFallback({
-      commandBody,
-      followupRun,
-      sessionCtx,
-      opts,
-      typingSignals,
-      blockReplyPipeline,
-      blockStreamingEnabled,
-      blockReplyChunking,
-      resolvedBlockStreamingBreak,
-      applyReplyToMode,
-      shouldEmitToolResult,
-      shouldEmitToolOutput,
-      pendingToolTasks,
-      resetSessionAfterCompactionFailure,
-      resetSessionAfterRoleOrderingConflict,
-      isHeartbeat,
-      sessionKey,
-      getActiveSessionEntry: () => activeSessionEntry,
-      activeSessionStore,
-      storePath,
-      resolvedVerboseLevel,
-    });
+    let runOutcome;
+    try {
+      runOutcome = await runAgentTurnWithFallback({
+        commandBody,
+        followupRun,
+        sessionCtx,
+        opts,
+        typingSignals,
+        blockReplyPipeline,
+        blockStreamingEnabled,
+        blockReplyChunking,
+        resolvedBlockStreamingBreak,
+        applyReplyToMode,
+        shouldEmitToolResult,
+        shouldEmitToolOutput,
+        pendingToolTasks,
+        resetSessionAfterCompactionFailure,
+        resetSessionAfterRoleOrderingConflict,
+        isHeartbeat,
+        sessionKey,
+        getActiveSessionEntry: () => activeSessionEntry,
+        activeSessionStore,
+        storePath,
+        resolvedVerboseLevel,
+      });
+    } catch (error) {
+      if (isDiagnosticsEnabled(cfg)) {
+        const errObj = error as {
+          reason?: string;
+          message?: string;
+          constructor?: { name?: string };
+        };
+        emitDiagnosticEvent({
+          type: "model.error",
+          sessionKey,
+          sessionId: followupRun.run.sessionId,
+          taskId: currentTaskId,
+          agentId: resolveAgentIdFromSessionKey(sessionKey),
+          spawnDepth: activeSessionEntry?.spawnDepth,
+          provider: followupRun.run.provider,
+          model: followupRun.run.model,
+          thinkLevel: followupRun.run.thinkLevel,
+          reasoningLevel: followupRun.run.reasoningLevel,
+          durationMs: Date.now() - runStartedAt,
+          errorKind: errObj?.constructor?.name ?? "Error",
+          ...(typeof errObj?.reason === "string" ? { errorReason: errObj.reason } : {}),
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : typeof errObj?.message === "string"
+                ? errObj.message
+                : String(error),
+        });
+      }
+      throw error;
+    }
 
     if (runOutcome.kind === "final") {
       return finalizeWithFollowup(runOutcome.payload, queueKey, runFollowupTurn);
@@ -617,9 +666,15 @@ export async function runReplyAgent(params: {
         type: "model.usage",
         sessionKey,
         sessionId: followupRun.run.sessionId,
+        taskId: currentTaskId,
+        agentId: resolveAgentIdFromSessionKey(sessionKey),
+        spawnDepth: activeSessionEntry?.spawnDepth,
         channel: replyToChannel,
         provider: providerUsed,
         model: modelUsed,
+        thinkLevel: followupRun.run.thinkLevel,
+        reasoningLevel: followupRun.run.reasoningLevel,
+        thinkingTokens: usage.thinkingTokens ?? null,
         usage: {
           input,
           output,

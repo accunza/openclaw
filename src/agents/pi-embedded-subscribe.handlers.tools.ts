@@ -871,7 +871,7 @@ export async function handleToolExecutionEnd(
       toolName,
       toolCallId,
       durationMs,
-      isError: Boolean(isToolError),
+      isError: isToolError,
       ...(errorMessage ? { errorMessage } : {}),
       ...(toolInput ? { toolInput } : {}),
     });

@@ -349,7 +349,12 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   const noteLlmCallStart = () => {
     llmCallStartedAt = Date.now();
   };
-  const noteLlmCallEnd = (usageLike: unknown, errorMessage?: string) => {
+  const noteLlmCallEnd = (
+    usageLike: unknown,
+    errorMessage?: string,
+    requestText?: string,
+    replyText?: string,
+  ) => {
     if (!params.onLlmCallComplete) {
       return;
     }
@@ -377,6 +382,8 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
       usage: usageResult,
       status: errorMessage ? "error" : "ok",
       ...(errorMessage ? { errorMessage } : {}),
+      ...(requestText ? { requestText } : {}),
+      ...(replyText ? { replyText } : {}),
     });
   };
   const recordAssistantUsage = (usageLike: unknown) => {

@@ -99,6 +99,28 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
       ...observedError,
       consoleMessage: `embedded run agent end: runId=${safeRunId} isError=true model=${safeModel} provider=${safeProvider} error=${safeErrorText}${rawErrorConsoleSuffix}`,
     });
+    emitAgentEvent({
+      runId: ctx.params.runId,
+      stream: "lifecycle",
+      data: {
+        phase: "error",
+        error: safeErrorText,
+        endedAt: Date.now(),
+      },
+    });
+    void ctx.params.onAgentEvent?.({
+      stream: "lifecycle",
+      data: {
+        phase: "error",
+        error: safeErrorText,
+      },
+    });
+
+    // Log errored LLM call to model.call trace
+    const requestText = ctx.params.triggerText
+      ? ctx.params.triggerText.replace(/\n+/g, " ").substring(0, 240)
+      : undefined;
+    ctx.noteLlmCallEnd(lastAssistant.usage, safeErrorText, requestText, undefined, undefined);
   } else {
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
   }

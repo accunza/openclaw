@@ -1476,6 +1476,7 @@ export async function runEmbeddedAttempt(
           sessionId: params.sessionId,
           agentId: sessionAgentId,
           internalEvents: params.internalEvents,
+          triggerText: params.triggerText,
           ...(isDiagnosticsEnabled(params.config) && params.config?.diagnostics?.callTrace?.enabled
             ? {
                 onLlmCallComplete:

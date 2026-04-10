@@ -3,7 +3,6 @@ import { callGateway } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
-import { AGENT_LANE_NESTED } from "../lanes.js";
 import { readLatestAssistantReply, waitForAgentRun } from "../run-wait.js";
 import { runAgentStep } from "./agent-step.js";
 import { resolveAnnounceTarget } from "./sessions-announce-target.js";
@@ -89,7 +88,7 @@ export async function runSessionsSendA2AFlow(params: {
           message: incomingMessage,
           extraSystemPrompt: replyPrompt,
           timeoutMs: params.announceTimeoutMs,
-          lane: AGENT_LANE_NESTED,
+          lane: "nested",
           sourceSessionKey: nextSessionKey,
           sourceChannel:
             nextSessionKey === params.requesterSessionKey ? params.requesterChannel : targetChannel,

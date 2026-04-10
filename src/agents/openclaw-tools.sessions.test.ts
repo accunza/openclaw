@@ -761,8 +761,13 @@ describe("sessions tools", () => {
     const historyOnlyCalls = calls.filter((call) => call.method === "chat.history");
     expect(agentCalls).toHaveLength(8);
     for (const call of agentCalls) {
+      const params = call.params as { extraSystemPrompt?: string; lane?: string };
+      const isAnnounceStep =
+        typeof params.extraSystemPrompt === "string" &&
+        params.extraSystemPrompt.includes("Agent-to-agent announce step");
+      const expectedLane = isAnnounceStep ? "announce" : "nested";
       expect(call.params).toMatchObject({
-        lane: "nested",
+        lane: expectedLane,
         channel: "webchat",
         inputProvenance: { kind: "inter_session" },
       });
@@ -941,8 +946,13 @@ describe("sessions tools", () => {
     const agentCalls = calls.filter((call) => call.method === "agent");
     expect(agentCalls).toHaveLength(4);
     for (const call of agentCalls) {
+      const params = call.params as { extraSystemPrompt?: string; lane?: string };
+      const isAnnounceStep =
+        typeof params.extraSystemPrompt === "string" &&
+        params.extraSystemPrompt.includes("Agent-to-agent announce step");
+      const expectedLane = isAnnounceStep ? "announce" : "nested";
       expect(call.params).toMatchObject({
-        lane: "nested",
+        lane: expectedLane,
         channel: "webchat",
         inputProvenance: { kind: "inter_session" },
       });

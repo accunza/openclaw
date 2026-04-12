@@ -252,9 +252,9 @@ export function installToolResultContextGuard(params: {
         messages: contextMessages,
         maxSingleToolResultChars,
       });
-      if (log.isEnabled("debug")) {
+      {
         const postSummary = summarizeToolResultGrowth(contextMessages);
-        log.debug(
+        log.info(
           `[overflow-diag] ${JSON.stringify({
             event: "tool_result_context_growth",
             toolResultCountBefore: preSummary.toolResultCount,
@@ -277,7 +277,7 @@ export function installToolResultContextGuard(params: {
         maxContextChars,
       })
     ) {
-      if (log.isEnabled("debug")) {
+      {
         const thresholdSummary = summarizeToolResultGrowth(contextMessages);
         log.warn(
           `[overflow-diag] ${JSON.stringify({

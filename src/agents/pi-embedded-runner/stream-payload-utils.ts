@@ -33,9 +33,9 @@ export function streamWithPayloadPatch(
       if (payload && typeof payload === "object") {
         const payloadObj = payload as Record<string, unknown>;
         patchPayload(payloadObj);
-        if (log.isEnabled("debug")) {
+        {
           const summary = summarizeProviderPayload(payloadObj);
-          log.debug(
+          log.info(
             "[overflow-diag] " +
               JSON.stringify({
                 event: "provider_payload_prepared",

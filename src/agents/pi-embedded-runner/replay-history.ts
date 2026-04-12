@@ -503,9 +503,9 @@ export async function sanitizeSessionHistory(params: {
         })
       : undefined;
   const sanitizedWithProvider = providerSanitized ?? sanitizedOpenAI;
-  if (log.isEnabled("debug")) {
+  {
     const afterSummary = summarizeReplayMessages(sanitizedWithProvider);
-    log.debug(
+    log.info(
       "[overflow-diag] " +
         JSON.stringify({
           event: "replay_sanitization",

@@ -1,4 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { log } from "./logger.js";
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE,
@@ -183,6 +184,35 @@ function enforceToolResultLimitInPlace(params: {
   }
 }
 
+function summarizeToolResultGrowth(messages: AgentMessage[]): {
+  toolResultCount: number;
+  toolResultChars: number;
+  largestToolResultChars: number;
+  estimatedContextChars: number;
+} {
+  const estimateCache = createMessageCharEstimateCache();
+  let toolResultCount = 0;
+  let toolResultChars = 0;
+  let largestToolResultChars = 0;
+  for (const msg of messages) {
+    if (!isToolResultMessage(msg)) {
+      continue;
+    }
+    toolResultCount += 1;
+    const size = getToolResultText(msg)?.length ?? 0;
+    toolResultChars += size;
+    if (size > largestToolResultChars) {
+      largestToolResultChars = size;
+    }
+  }
+  return {
+    toolResultCount,
+    toolResultChars,
+    largestToolResultChars,
+    estimatedContextChars: estimateContextChars(messages, estimateCache),
+  };
+}
+
 export function installToolResultContextGuard(params: {
   agent: GuardableAgent;
   contextWindowTokens: number;
@@ -210,6 +240,7 @@ export function installToolResultContextGuard(params: {
       : messages;
 
     const sourceMessages = Array.isArray(transformed) ? transformed : messages;
+    const preSummary = summarizeToolResultGrowth(sourceMessages);
     const contextMessages = toolResultsNeedTruncation({
       messages: sourceMessages,
       maxSingleToolResultChars,
@@ -221,6 +252,24 @@ export function installToolResultContextGuard(params: {
         messages: contextMessages,
         maxSingleToolResultChars,
       });
+      if (log.isEnabled("debug")) {
+        const postSummary = summarizeToolResultGrowth(contextMessages);
+        log.debug(
+          `[overflow-diag] ${JSON.stringify({
+            event: "tool_result_context_growth",
+            toolResultCountBefore: preSummary.toolResultCount,
+            toolResultCountAfter: postSummary.toolResultCount,
+            toolResultCharsBefore: preSummary.toolResultChars,
+            toolResultCharsAfter: postSummary.toolResultChars,
+            largestToolResultCharsBefore: preSummary.largestToolResultChars,
+            largestToolResultCharsAfter: postSummary.largestToolResultChars,
+            estimatedContextCharsBefore: preSummary.estimatedContextChars,
+            estimatedContextCharsAfter: postSummary.estimatedContextChars,
+            maxSingleToolResultChars,
+            maxContextChars,
+          })}`,
+        );
+      }
     }
     if (
       exceedsPreemptiveOverflowThreshold({
@@ -228,6 +277,21 @@ export function installToolResultContextGuard(params: {
         maxContextChars,
       })
     ) {
+      if (log.isEnabled("debug")) {
+        const thresholdSummary = summarizeToolResultGrowth(contextMessages);
+        log.warn(
+          `[overflow-diag] ${JSON.stringify({
+            event: "tool_result_preemptive_overflow",
+            overflowTriggerReason: "preemptive_context_threshold_exceeded",
+            estimatedContextChars: thresholdSummary.estimatedContextChars,
+            maxContextChars,
+            toolResultCount: thresholdSummary.toolResultCount,
+            toolResultChars: thresholdSummary.toolResultChars,
+            largestToolResultChars: thresholdSummary.largestToolResultChars,
+            maxSingleToolResultChars,
+          })}`,
+        );
+      }
       throw new Error(PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE);
     }
 

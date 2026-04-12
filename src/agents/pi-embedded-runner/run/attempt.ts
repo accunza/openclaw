@@ -159,6 +159,12 @@ import {
 } from "../system-prompt.js";
 import { dropThinkingBlocks } from "../thinking.js";
 import { collectAllowedToolNames } from "../tool-name-allowlist.js";
+import {
+  createMessageCharEstimateCache,
+  estimateContextChars,
+  getToolResultText,
+  isToolResultMessage,
+} from "../tool-result-char-estimator.js";
 import { installToolResultContextGuard } from "../tool-result-context-guard.js";
 import { truncateOversizedToolResultsInSessionManager } from "../tool-result-truncation.js";
 import {
@@ -274,6 +280,46 @@ export {
 };
 
 const MAX_BTW_SNAPSHOT_MESSAGES = 100;
+
+function logOverflowDiagnostics(
+  event: string,
+  fields: Record<string, unknown>,
+  level: "debug" | "info" | "warn" = "debug",
+): void {
+  const payload = { event, ts: new Date().toISOString(), ...fields };
+  const line = `[overflow-diag] ${JSON.stringify(payload)}`;
+  if (level === "info") {
+    log.info(line);
+    return;
+  }
+  if (level === "warn") {
+    log.warn(line);
+    return;
+  }
+  log.debug(line);
+}
+
+function summarizeToolResultContribution(messages: AgentMessage[]): {
+  toolResultCount: number;
+  toolResultTextChars: number;
+  maxToolResultTextChars: number;
+} {
+  let toolResultCount = 0;
+  let toolResultTextChars = 0;
+  let maxToolResultTextChars = 0;
+  for (const message of messages) {
+    if (!isToolResultMessage(message)) {
+      continue;
+    }
+    toolResultCount += 1;
+    const textLength = getToolResultText(message)?.length ?? 0;
+    toolResultTextChars += textLength;
+    if (textLength > maxToolResultTextChars) {
+      maxToolResultTextChars = textLength;
+    }
+  }
+  return { toolResultCount, toolResultTextChars, maxToolResultTextChars };
+}
 
 function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageBlocks: number } {
   const content = (msg as { content?: unknown }).content;
@@ -1887,12 +1933,26 @@ export async function runEmbeddedAttempt(
           });
 
           // Diagnostic: log context sizes before prompt to help debug early overflow errors.
-          if (log.isEnabled("debug")) {
+          {
             const msgCount = activeSession.messages.length;
             const systemLen = systemPromptText?.length ?? 0;
             const promptLen = effectivePrompt.length;
             const sessionSummary = summarizeSessionContext(activeSession.messages);
-            log.debug(
+            const contextCharsEstimated = estimateContextChars(
+              activeSession.messages,
+              createMessageCharEstimateCache(),
+            );
+            const toolResultContribution = summarizeToolResultContribution(activeSession.messages);
+            const contextWindowTokens = Math.max(
+              1,
+              Math.floor(
+                params.contextTokenBudget ??
+                  params.model.contextWindow ??
+                  params.model.maxTokens ??
+                  DEFAULT_CONTEXT_TOKENS,
+              ),
+            );
+            log.info(
               `[context-diag] pre-prompt: sessionKey=${params.sessionKey ?? params.sessionId} ` +
                 `messages=${msgCount} roleCounts=${sessionSummary.roleCounts} ` +
                 `historyTextChars=${sessionSummary.totalTextChars} ` +
@@ -1901,6 +1961,27 @@ export async function runEmbeddedAttempt(
                 `systemPromptChars=${systemLen} promptChars=${promptLen} ` +
                 `promptImages=${imageResult.images.length} ` +
                 `provider=${params.provider}/${params.modelId} sessionFile=${params.sessionFile}`,
+            );
+            logOverflowDiagnostics(
+              "pre_prompt_context_check",
+              {
+                runId: params.runId,
+                sessionId: params.sessionId,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                provider: params.provider,
+                model: params.modelId,
+                modelApi: params.model.api,
+                contextWindowTokens,
+                estimatedContextChars: contextCharsEstimated,
+                messageCount: msgCount,
+                historyTextChars: sessionSummary.totalTextChars,
+                systemPromptChars: systemLen,
+                promptChars: promptLen,
+                toolResultCount: toolResultContribution.toolResultCount,
+                toolResultTextChars: toolResultContribution.toolResultTextChars,
+                maxToolResultTextChars: toolResultContribution.maxToolResultTextChars,
+              },
+              "info",
             );
           }
 
@@ -1966,6 +2047,26 @@ export async function runEmbeddedAttempt(
                   `toolResultReducibleChars=${preemptiveCompaction.toolResultReducibleChars} ` +
                   `sessionFile=${params.sessionFile}`,
               );
+              logOverflowDiagnostics(
+                "pre_prompt_overflow_precheck",
+                {
+                  runId: params.runId,
+                  sessionId: params.sessionId,
+                  sessionKey: params.sessionKey ?? params.sessionId,
+                  provider: params.provider,
+                  model: params.modelId,
+                  modelApi: params.model.api,
+                  decisionPath: [preemptiveCompaction.route, "truncate_tool_results_only"],
+                  overflowTriggerReason: "tool_result_share_over_budget",
+                  estimatedPromptTokens: preemptiveCompaction.estimatedPromptTokens,
+                  promptBudgetBeforeReserve: preemptiveCompaction.promptBudgetBeforeReserve,
+                  overflowTokens: preemptiveCompaction.overflowTokens,
+                  toolResultReducibleChars: preemptiveCompaction.toolResultReducibleChars,
+                  truncationApplied: true,
+                  truncatedCount: truncationResult.truncatedCount,
+                },
+                "info",
+              );
               skipPromptSubmission = true;
             }
             if (!skipPromptSubmission) {
@@ -1977,6 +2078,25 @@ export async function runEmbeddedAttempt(
               preflightRecovery = { route: "compact_only" };
               promptError = new Error(PREEMPTIVE_OVERFLOW_ERROR_TEXT);
               promptErrorSource = "precheck";
+              logOverflowDiagnostics(
+                "pre_prompt_overflow_precheck",
+                {
+                  runId: params.runId,
+                  sessionId: params.sessionId,
+                  sessionKey: params.sessionKey ?? params.sessionId,
+                  provider: params.provider,
+                  model: params.modelId,
+                  modelApi: params.model.api,
+                  decisionPath: [preemptiveCompaction.route, "compact_only"],
+                  overflowTriggerReason: truncationResult.reason ?? "truncation_not_effective",
+                  estimatedPromptTokens: preemptiveCompaction.estimatedPromptTokens,
+                  promptBudgetBeforeReserve: preemptiveCompaction.promptBudgetBeforeReserve,
+                  overflowTokens: preemptiveCompaction.overflowTokens,
+                  toolResultReducibleChars: preemptiveCompaction.toolResultReducibleChars,
+                  truncationApplied: false,
+                },
+                "warn",
+              );
               skipPromptSubmission = true;
             }
           }
@@ -1996,6 +2116,25 @@ export async function runEmbeddedAttempt(
                 `overflowTokens=${preemptiveCompaction.overflowTokens} ` +
                 `toolResultReducibleChars=${preemptiveCompaction.toolResultReducibleChars} ` +
                 `reserveTokens=${reserveTokens} sessionFile=${params.sessionFile}`,
+            );
+            logOverflowDiagnostics(
+              "pre_prompt_overflow_precheck",
+              {
+                runId: params.runId,
+                sessionId: params.sessionId,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                provider: params.provider,
+                model: params.modelId,
+                modelApi: params.model.api,
+                decisionPath: [preemptiveCompaction.route],
+                overflowTriggerReason: "prompt_budget_exceeded",
+                estimatedPromptTokens: preemptiveCompaction.estimatedPromptTokens,
+                promptBudgetBeforeReserve: preemptiveCompaction.promptBudgetBeforeReserve,
+                overflowTokens: preemptiveCompaction.overflowTokens,
+                toolResultReducibleChars: preemptiveCompaction.toolResultReducibleChars,
+                reserveTokens,
+              },
+              "warn",
             );
             skipPromptSubmission = true;
           }

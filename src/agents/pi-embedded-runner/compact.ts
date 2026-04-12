@@ -291,6 +291,24 @@ function summarizeCompactionMessages(messages: AgentMessage[]): CompactionMessag
   };
 }
 
+function logCompactionOverflowDiag(
+  fields: Record<string, unknown>,
+  level: "debug" | "info" | "warn" = "debug",
+): void {
+  const line =
+    "[overflow-diag] " +
+    JSON.stringify({ event: "compaction_attempt", ts: new Date().toISOString(), ...fields });
+  if (level === "info") {
+    log.info(line);
+    return;
+  }
+  if (level === "warn") {
+    log.warn(line);
+    return;
+  }
+  log.debug(line);
+}
+
 function containsRealConversationMessages(messages: AgentMessage[]): boolean {
   return messages.some((message, index, allMessages) =>
     hasRealConversationContent(message, allMessages, index),
@@ -959,6 +977,21 @@ export async function compactEmbeddedPiSessionDirect(
               `[compaction-diag] contributors diagId=${diagId} top=${JSON.stringify(preMetrics.contributors)}`,
             );
           }
+          logCompactionOverflowDiag({
+            runId,
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey ?? params.sessionId,
+            provider,
+            model: modelId,
+            modelApi: model.api,
+            attempt,
+            maxAttempts,
+            trigger,
+            decisionPath: [trigger, "start"],
+            preMessageCount: preMetrics?.messages,
+            preEstimatedTokens: preMetrics?.estTokens,
+            preToolResultChars: preMetrics?.toolResultChars,
+          });
 
           if (!containsRealConversationMessages(session.messages)) {
             log.info(
@@ -1079,6 +1112,27 @@ export async function compactEmbeddedPiSessionDirect(
                 `delta.estTokens=${typeof preMetrics.estTokens === "number" && typeof postMetrics.estTokens === "number" ? postMetrics.estTokens - preMetrics.estTokens : "unknown"}`,
             );
           }
+          logCompactionOverflowDiag(
+            {
+              runId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey ?? params.sessionId,
+              provider,
+              model: modelId,
+              modelApi: model.api,
+              attempt,
+              maxAttempts,
+              trigger,
+              decisionPath: [trigger, "compacted"],
+              durationMs: Date.now() - compactStartedAt,
+              tokensBefore: observedTokenCount ?? result.tokensBefore,
+              tokensAfter,
+              compactedCount,
+              postMessageCount: postMetrics?.messages,
+              postToolResultChars: postMetrics?.toolResultChars,
+            },
+            "info",
+          );
           await runAfterCompactionHooks({
             hookRunner,
             sessionId: params.sessionId,
@@ -1132,6 +1186,23 @@ export async function compactEmbeddedPiSessionDirect(
             },
           };
         } catch (err) {
+          logCompactionOverflowDiag(
+            {
+              runId,
+              sessionId: params.sessionId,
+              sessionKey: params.sessionKey ?? params.sessionId,
+              provider,
+              model: modelId,
+              modelApi: model.api,
+              attempt,
+              maxAttempts,
+              trigger,
+              decisionPath: [trigger, "error"],
+              overflowTriggerReason: "compaction_request_failed",
+              errorMessage: formatErrorMessage(err),
+            },
+            "warn",
+          );
           const fallbackThinking = pickFallbackThinkingLevel({
             message: formatErrorMessage(err),
             attempted: attemptedThinking,

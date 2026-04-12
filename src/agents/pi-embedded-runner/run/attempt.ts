@@ -1857,7 +1857,7 @@ export async function runEmbeddedAttempt(
           });
 
           // Diagnostic: log context sizes before prompt to help debug early overflow errors.
-          if (log.isEnabled("debug")) {
+          {
             const msgCount = activeSession.messages.length;
             const systemLen = systemPromptText?.length ?? 0;
             const promptLen = effectivePrompt.length;
@@ -1876,7 +1876,7 @@ export async function runEmbeddedAttempt(
                   DEFAULT_CONTEXT_TOKENS,
               ),
             );
-            log.debug(
+            log.info(
               `[context-diag] pre-prompt: sessionKey=${params.sessionKey ?? params.sessionId} ` +
                 `messages=${msgCount} roleCounts=${sessionSummary.roleCounts} ` +
                 `historyTextChars=${sessionSummary.totalTextChars} ` +
@@ -1886,23 +1886,27 @@ export async function runEmbeddedAttempt(
                 `promptImages=${imageResult.images.length} ` +
                 `provider=${params.provider}/${params.modelId} sessionFile=${params.sessionFile}`,
             );
-            logOverflowDiagnostics("pre_prompt_context_check", {
-              runId: params.runId,
-              sessionId: params.sessionId,
-              sessionKey: params.sessionKey ?? params.sessionId,
-              provider: params.provider,
-              model: params.modelId,
-              modelApi: params.model.api,
-              contextWindowTokens,
-              estimatedContextChars: contextCharsEstimated,
-              messageCount: msgCount,
-              historyTextChars: sessionSummary.totalTextChars,
-              systemPromptChars: systemLen,
-              promptChars: promptLen,
-              toolResultCount: toolResultContribution.toolResultCount,
-              toolResultTextChars: toolResultContribution.toolResultTextChars,
-              maxToolResultTextChars: toolResultContribution.maxToolResultTextChars,
-            });
+            logOverflowDiagnostics(
+              "pre_prompt_context_check",
+              {
+                runId: params.runId,
+                sessionId: params.sessionId,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                provider: params.provider,
+                model: params.modelId,
+                modelApi: params.model.api,
+                contextWindowTokens,
+                estimatedContextChars: contextCharsEstimated,
+                messageCount: msgCount,
+                historyTextChars: sessionSummary.totalTextChars,
+                systemPromptChars: systemLen,
+                promptChars: promptLen,
+                toolResultCount: toolResultContribution.toolResultCount,
+                toolResultTextChars: toolResultContribution.toolResultTextChars,
+                maxToolResultTextChars: toolResultContribution.maxToolResultTextChars,
+              },
+              "info",
+            );
           }
 
           if (hookRunner?.hasHooks("llm_input")) {

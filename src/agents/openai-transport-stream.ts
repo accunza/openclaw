@@ -19,6 +19,7 @@ import type {
   ResponseInput,
   ResponseInputMessageContentList,
 } from "openai/resources/responses/responses.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ProviderRuntimeModel } from "../plugins/provider-runtime-model.types.js";
 import { resolveProviderTransportTurnStateWithPlugin } from "../plugins/provider-runtime.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./copilot-dynamic-headers.js";
@@ -28,6 +29,7 @@ import {
   applyOpenAIResponsesPayloadPolicy,
   resolveOpenAIResponsesPayloadPolicy,
 } from "./openai-responses-payload-policy.js";
+import { estimateOpenAIResponsesInputTokens } from "./openai-responses-preflight-estimator.js";
 import {
   normalizeOpenAIStrictToolParameters,
   resolveOpenAIStrictToolFlagForInventory,
@@ -39,6 +41,9 @@ import { transformTransportMessages } from "./transport-message-transform.js";
 import { mergeTransportMetadata, sanitizeTransportPayloadText } from "./transport-stream-shared.js";
 
 const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-12-01-preview";
+const CODEX_RESPONSES_PREFLIGHT_OVERFLOW_MESSAGE =
+  "OpenAI Codex Responses payload exceeds the preflight overflow threshold.";
+const log = createSubsystemLogger("openai-transport-stream");
 
 type OpenAIReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -643,6 +648,38 @@ function createOpenAIResponsesClient(
   });
 }
 
+function enforceOpenAICodexResponsesPreflightGuard(
+  model: Model<Api>,
+  payload: OpenAIResponsesRequestParams,
+): void {
+  if (model.provider !== "openai-codex" || model.api !== "openai-codex-responses") {
+    return;
+  }
+  const contextWindow =
+    typeof model.contextWindow === "number" && Number.isFinite(model.contextWindow)
+      ? Math.max(1, Math.trunc(model.contextWindow))
+      : undefined;
+  if (!contextWindow) {
+    return;
+  }
+  const threshold = resolveOpenAIResponsesPayloadPolicy(model, {
+    storeMode: "disable",
+  }).compactThreshold;
+  const estimatedTokens = estimateOpenAIResponsesInputTokens(payload.input);
+  if (estimatedTokens > threshold) {
+    log.warn("provider_payload_overflow_prevented", {
+      provider: model.provider,
+      model: model.id,
+      estimatedTokens,
+      contextWindow,
+      threshold,
+      action: "prevented_before_submit",
+      recovery: "overflow_compaction_path",
+    });
+    throw new Error(CODEX_RESPONSES_PREFLIGHT_OVERFLOW_MESSAGE);
+  }
+}
+
 export function createOpenAIResponsesTransportStreamFn(): StreamFn {
   return (model, context, options) => {
     const eventStream = createAssistantMessageEventStream();
@@ -686,6 +723,7 @@ export function createOpenAIResponsesTransportStreamFn(): StreamFn {
           options as OpenAIResponsesOptions,
           turnState?.metadata,
         );
+        enforceOpenAICodexResponsesPreflightGuard(model, params);
         const nextParams = await options?.onPayload?.(params, model);
         if (nextParams !== undefined) {
           params = nextParams as typeof params;
@@ -1383,4 +1421,7 @@ function mapStopReason(reason: string | null) {
 
 export const __testing = {
   processOpenAICompletionsStream,
+  enforceOpenAICodexResponsesPreflightGuard,
+  estimateOpenAIResponsesInputTokens,
+  CODEX_RESPONSES_PREFLIGHT_OVERFLOW_MESSAGE,
 };

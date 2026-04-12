@@ -201,6 +201,8 @@ export function handleMessageStart(
   // may deliver late text_end updates after message_end, which would otherwise
   // re-trigger block replies.
   ctx.resetAssistantMessageState(ctx.state.assistantTexts.length);
+  // Record start of this LLM API call for per-call timing (model.call trace).
+  ctx.noteLlmCallStart();
   // Use assistant message_start as the earliest "writing" signal for typing.
   void ctx.params.onAssistantMessageStart?.();
 }
@@ -443,6 +445,107 @@ export function handleMessageUpdate(
   }
 }
 
+type ToolUseBlock = {
+  type: "tool_use";
+  name: string;
+  input: Record<string, unknown>;
+  id: string;
+};
+
+type ToolCallBlock = {
+  type: "toolCall";
+  name: string;
+  arguments: Record<string, unknown>;
+  id: string;
+};
+
+/**
+ * Extract tool calls from an assistant message.
+ * Returns an array of {name, input} where input is the primary parameter
+ * as a compact string (max 240 chars).
+ */
+function extractToolCalls(assistantMessage: AgentMessage): { name: string; input: string }[] {
+  // Cast to access content - only AssistantMessage (role=assistant) has content
+  const msg = assistantMessage as unknown as { content?: unknown };
+  const content = msg.content;
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const toolCalls: { name: string; input: string }[] = [];
+
+  for (const block of content) {
+    if (typeof block !== "object" || block === null) {
+      continue;
+    }
+
+    const blockType = (block as { type: string }).type;
+    let name: string;
+    let inputObj: Record<string, unknown>;
+
+    if (blockType === "tool_use") {
+      const toolBlock = block as ToolUseBlock;
+      name = toolBlock.name;
+      inputObj = toolBlock.input;
+    } else if (blockType === "toolCall") {
+      const toolBlock = block as ToolCallBlock;
+      name = toolBlock.name;
+      inputObj = toolBlock.arguments;
+    } else {
+      continue;
+    }
+
+    // Extract the primary input parameter as a compact string.
+    // Known tools: exec (command), Read (file/file_path), Write (file_path),
+    // web_search (query), web_fetch (url), etc.
+    let inputStr = "";
+
+    if (inputObj) {
+      // Try common parameter names first
+      const primaryParams = [
+        "command",
+        "file",
+        "file_path",
+        "path",
+        "query",
+        "url",
+        "prompt",
+        "code",
+        "text",
+        "message",
+      ];
+      for (const param of primaryParams) {
+        if (typeof inputObj[param] === "string" && inputObj[param]) {
+          inputStr = inputObj[param];
+          break;
+        }
+      }
+
+      // If no common param found, use the first string value
+      if (!inputStr) {
+        for (const value of Object.values(inputObj)) {
+          if (typeof value === "string" && value) {
+            inputStr = value;
+            break;
+          }
+        }
+      }
+
+      // Fallback: stringify the entire input object
+      if (!inputStr) {
+        inputStr = JSON.stringify(inputObj);
+      }
+    }
+
+    // Compact: replace newlines and truncate to 240 chars
+    inputStr = inputStr.replace(/\n+/g, " ").substring(0, 240);
+
+    toolCalls.push({ name, input: inputStr });
+  }
+
+  return toolCalls;
+}
+
 export function handleMessageEnd(
   ctx: EmbeddedPiSubscribeContext,
   evt: AgentEvent & { message: AgentMessage },
@@ -458,13 +561,28 @@ export function handleMessageEnd(
   const suppressDeterministicApprovalOutput =
     ctx.state.deterministicApprovalPromptPending || ctx.state.deterministicApprovalPromptSent;
   ctx.noteLastAssistant(assistantMessage);
-  ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
+  const rawUsage = (assistantMessage as { usage?: unknown }).usage;
+  ctx.recordAssistantUsage(rawUsage);
+
+  // Extract replyText before calling noteLlmCallEnd
+  const rawText = extractAssistantText(assistantMessage);
+  const replyText = rawText.replace(/\n+/g, " ").substring(0, 240);
+
+  // Extract requestText: prefer triggerText (raw user input) over session messages (LLM prompt).
+  const requestText = ctx.params.triggerText
+    ? ctx.params.triggerText.replace(/\n+/g, " ").substring(0, 240)
+    : undefined;
+
+  // Extract tool calls from the assistant message
+  const toolCalls = extractToolCalls(assistantMessage);
+
+  // Emit per-call trace event (model.call) — only if onLlmCallComplete is set.
+  ctx.noteLlmCallEnd(rawUsage, undefined, requestText, replyText, toolCalls);
   if (suppressVisibleAssistantOutput) {
     return;
   }
   promoteThinkingTagsToBlocks(assistantMessage);
 
-  const rawText = coerceText(extractAssistantText(assistantMessage));
   const rawVisibleText = coerceText(extractAssistantVisibleText(assistantMessage));
   appendRawStream({
     ts: Date.now(),

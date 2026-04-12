@@ -8,6 +8,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
+import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
@@ -36,6 +37,7 @@ import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
 import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
+import { estimateUsageCost, resolveModelCostConfig } from "../../../utils/usage-format.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
@@ -1474,6 +1476,80 @@ export async function runEmbeddedAttempt(
           sessionId: params.sessionId,
           agentId: sessionAgentId,
           internalEvents: params.internalEvents,
+          triggerText: params.triggerText,
+          ...(isDiagnosticsEnabled(params.config) && params.config?.diagnostics?.callTrace?.enabled
+            ? {
+                onLlmCallComplete:
+                  params.config?.diagnostics?.callTrace?.logLlmCalls !== false
+                    ? (evt: {
+                        callIndex: number;
+                        durationMs: number;
+                        usage?: {
+                          input?: number;
+                          output?: number;
+                          cacheRead?: number;
+                          cacheWrite?: number;
+                          total?: number;
+                        };
+                        status: "ok" | "error";
+                        errorMessage?: string;
+                        costUsd?: number;
+                        requestText?: string;
+                        replyText?: string;
+                        toolCalls?: { name: string; input: string }[];
+                      }) => {
+                        const costConfig = resolveModelCostConfig({
+                          provider: params.provider,
+                          model: params.modelId,
+                          config: params.config,
+                        });
+                        const costUsd = estimateUsageCost({ usage: evt.usage, cost: costConfig });
+                        emitDiagnosticEvent({
+                          type: "model.call",
+                          sessionKey: params.sessionKey,
+                          sessionId: params.sessionId,
+                          turnId: params.turnId,
+                          agentId: sessionAgentId,
+                          callIndex: evt.callIndex,
+                          provider: params.provider,
+                          model: params.modelId,
+                          usage: evt.usage,
+                          durationMs: evt.durationMs,
+                          status: evt.status,
+                          ...(evt.errorMessage ? { errorMessage: evt.errorMessage } : {}),
+                          ...(costUsd != null ? { costUsd } : {}),
+                          ...(evt.requestText ? { requestText: evt.requestText } : {}),
+                          ...(evt.replyText ? { replyText: evt.replyText } : {}),
+                          ...(evt.toolCalls?.length ? { toolCalls: evt.toolCalls } : {}),
+                        });
+                      }
+                    : undefined,
+                onToolCallComplete:
+                  params.config?.diagnostics?.callTrace?.logToolCalls === true
+                    ? (evt: {
+                        toolName: string;
+                        toolCallId: string;
+                        durationMs: number;
+                        isError: boolean;
+                        errorMessage?: string;
+                        toolInput?: Record<string, unknown>;
+                      }) =>
+                        emitDiagnosticEvent({
+                          type: "tool.call",
+                          sessionKey: params.sessionKey,
+                          sessionId: params.sessionId,
+                          turnId: params.turnId,
+                          agentId: sessionAgentId,
+                          toolName: evt.toolName,
+                          toolCallId: evt.toolCallId,
+                          durationMs: evt.durationMs,
+                          isError: evt.isError,
+                          ...(evt.errorMessage ? { errorMessage: evt.errorMessage } : {}),
+                          ...(evt.toolInput ? { toolInput: evt.toolInput } : {}),
+                        })
+                    : undefined,
+              }
+            : {}),
         }),
       );
 

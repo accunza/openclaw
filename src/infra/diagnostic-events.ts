@@ -8,7 +8,7 @@ type DiagnosticBaseEvent = {
 };
 
 export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
-  type: "model.usage";
+  type: "turn.summary";
   sessionKey?: string;
   sessionId?: string;
   channel?: string;
@@ -22,19 +22,60 @@ export type DiagnosticUsageEvent = DiagnosticBaseEvent & {
     promptTokens?: number;
     total?: number;
   };
-  lastCallUsage?: {
+  costUsd?: number;
+  durationMs?: number;
+  turnId?: string;
+  agentId?: string;
+  triggerKind?: string;
+  triggerChannel?: string;
+  triggerMessageId?: string;
+  triggerSenderName?: string;
+  thinkLevel?: string;
+  status?: string;
+  triggerText?: string;
+  replyText?: string;
+};
+
+export type DiagnosticModelCallEvent = DiagnosticBaseEvent & {
+  type: "model.call";
+  sessionKey?: string;
+  sessionId?: string;
+  turnId?: string;
+  agentId?: string;
+  callIndex: number;
+  provider?: string;
+  model?: string;
+  usage?: {
     input?: number;
     output?: number;
     cacheRead?: number;
     cacheWrite?: number;
     total?: number;
   };
-  context?: {
-    limit?: number;
-    used?: number;
-  };
+  durationMs: number;
+  status: "ok" | "error";
+  errorMessage?: string;
+  /** Estimated cost in USD for this single LLM call. */
   costUsd?: number;
-  durationMs?: number;
+  requestText?: string;
+  replyText?: string;
+  /** Tool calls executed in this LLM response (max 240 chars per input). */
+  toolCalls?: { name: string; input: string }[];
+};
+
+export type DiagnosticToolCallEvent = DiagnosticBaseEvent & {
+  type: "tool.call";
+  sessionKey?: string;
+  sessionId?: string;
+  turnId?: string;
+  agentId?: string;
+  toolName: string;
+  toolCallId?: string;
+  durationMs: number;
+  isError: boolean;
+  errorMessage?: string;
+  /** Key input params extracted from the tool call args (command, path, query, url, etc.). */
+  toolInput?: Record<string, unknown>;
 };
 
 export type DiagnosticWebhookReceivedEvent = DiagnosticBaseEvent & {
@@ -149,6 +190,8 @@ export type DiagnosticToolLoopEvent = DiagnosticBaseEvent & {
 
 export type DiagnosticEventPayload =
   | DiagnosticUsageEvent
+  | DiagnosticModelCallEvent
+  | DiagnosticToolCallEvent
   | DiagnosticWebhookReceivedEvent
   | DiagnosticWebhookProcessedEvent
   | DiagnosticWebhookErrorEvent

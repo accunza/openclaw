@@ -172,10 +172,6 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         unit: "ms",
         description: "Agent run duration",
       });
-      const contextHistogram = meter.createHistogram("openclaw.context.tokens", {
-        unit: "1",
-        description: "Context window size and usage",
-      });
       const webhookReceivedCounter = meter.createCounter("openclaw.webhook.received", {
         unit: "1",
         description: "Webhook requests received",
@@ -372,7 +368,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         return span;
       };
 
-      const recordModelUsage = (evt: Extract<DiagnosticEventPayload, { type: "model.usage" }>) => {
+      const recordModelUsage = (evt: Extract<DiagnosticEventPayload, { type: "turn.summary" }>) => {
         const attrs = {
           "openclaw.channel": evt.channel ?? "unknown",
           "openclaw.provider": evt.provider ?? "unknown",
@@ -405,18 +401,6 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         if (evt.durationMs) {
           durationHistogram.record(evt.durationMs, attrs);
         }
-        if (evt.context?.limit) {
-          contextHistogram.record(evt.context.limit, {
-            ...attrs,
-            "openclaw.context": "limit",
-          });
-        }
-        if (evt.context?.used) {
-          contextHistogram.record(evt.context.used, {
-            ...attrs,
-            "openclaw.context": "used",
-          });
-        }
 
         if (!tracesEnabled) {
           return;
@@ -432,7 +416,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
           "openclaw.tokens.total": usage.total ?? 0,
         };
 
-        const span = spanWithDuration("openclaw.model.usage", spanAttrs, evt.durationMs);
+        const span = spanWithDuration("openclaw.turn.summary", spanAttrs, evt.durationMs);
         span.end();
       };
 
@@ -612,7 +596,7 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
       unsubscribe = onDiagnosticEvent((evt: DiagnosticEventPayload) => {
         try {
           switch (evt.type) {
-            case "model.usage":
+            case "turn.summary":
               recordModelUsage(evt);
               return;
             case "webhook.received":

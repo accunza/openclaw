@@ -40,4 +40,44 @@ export type SubscribeEmbeddedPiSessionParams = {
   /** Agent identity for hook context — resolved from session config in attempt.ts. */
   agentId?: string;
   internalEvents?: AgentInternalEvent[];
+  /** Raw user text for diagnostics call tracing (model.call.requestText). */
+  triggerText?: string;
+  /**
+   * Called after every LLM API call completes (model.call trace).
+   * Only invoked when diagnostics.callTrace.enabled and logLlmCalls are true.
+   */
+  onLlmCallComplete?: (event: {
+    callIndex: number;
+    durationMs: number;
+    usage?: {
+      input?: number;
+      output?: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+      total?: number;
+    };
+    status: "ok" | "error";
+    errorMessage?: string;
+    /** Estimated cost in USD for this single LLM call. */
+    costUsd?: number;
+    /** The last user message text (max 240 chars, newlines compressed). */
+    requestText?: string;
+    /** The assistant reply text (max 240 chars, newlines compressed). */
+    replyText?: string;
+    /** Tool calls executed in this LLM response (max 240 chars per input). */
+    toolCalls?: { name: string; input: string }[];
+  }) => void;
+  /**
+   * Called after every internal tool execution completes (tool.call trace).
+   * Only invoked when diagnostics.callTrace.enabled and logToolCalls are true.
+   */
+  onToolCallComplete?: (event: {
+    toolName: string;
+    toolCallId: string;
+    durationMs: number;
+    isError: boolean;
+    errorMessage?: string;
+    /** Key input params extracted from the tool call args (command, path, query, etc.). */
+    toolInput?: Record<string, unknown>;
+  }) => void;
 };

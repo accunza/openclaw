@@ -10,6 +10,7 @@ import {
   type SessionEntry,
   updateSessionStoreEntry,
 } from "../../config/sessions.js";
+import { resolveAgentIdFromSessionKey } from "../../config/sessions/main-session.js";
 import type { TypingMode } from "../../config/types.js";
 import { emitAgentEvent } from "../../infra/agent-events.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
@@ -416,6 +417,7 @@ export async function runReplyAgent(params: {
 
     replyOperation.setPhase("running");
     const runStartedAt = Date.now();
+    const turnId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
     const runOutcome = await runAgentTurnWithFallback({
       commandBody,
       followupRun,
@@ -439,6 +441,7 @@ export async function runReplyAgent(params: {
       activeSessionStore,
       storePath,
       resolvedVerboseLevel,
+      turnId,
     });
 
     if (runOutcome.kind === "final") {
@@ -625,6 +628,15 @@ export async function runReplyAgent(params: {
 
     await signalTypingIfNeeded(guardedReplyPayloads, typingSignals);
 
+    // Extract replyText from non-error payloads with text
+    const replyText = payloadArray
+      .filter((payload) => !payload.isError && typeof payload.text === "string")
+      .map((payload) => payload.text as string)
+      .join(" ")
+      .replace(/[\r\n\t]+/g, " ")
+      .trim()
+      .slice(0, 240);
+
     if (isDiagnosticsEnabled(cfg) && hasNonzeroUsage(usage)) {
       const input = usage.input ?? 0;
       const output = usage.output ?? 0;
@@ -639,7 +651,7 @@ export async function runReplyAgent(params: {
       });
       const costUsd = estimateUsageCost({ usage, cost: costConfig });
       emitDiagnosticEvent({
-        type: "model.usage",
+        type: "turn.summary",
         sessionKey,
         sessionId: followupRun.run.sessionId,
         channel: replyToChannel,
@@ -653,13 +665,21 @@ export async function runReplyAgent(params: {
           promptTokens,
           total: totalTokens,
         },
-        lastCallUsage: runResult.meta?.agentMeta?.lastCallUsage,
-        context: {
-          limit: contextTokensUsed,
-          used: totalTokens,
-        },
         costUsd,
         durationMs: Date.now() - runStartedAt,
+        turnId,
+        agentId: resolveAgentIdFromSessionKey(sessionKey),
+        triggerKind: followupRun.run.inputProvenance?.kind ?? "user",
+        triggerChannel: followupRun.originatingChannel ?? replyToChannel,
+        triggerMessageId: followupRun.messageId,
+        triggerSenderName: followupRun.run.senderName,
+        thinkLevel: followupRun.run.thinkLevel,
+        status: "ok",
+        triggerText: followupRun.summaryLine
+          ?.replace(/[\r\n\t]+/g, " ")
+          .trim()
+          .slice(0, 240),
+        replyText: replyText || undefined,
       });
     }
 

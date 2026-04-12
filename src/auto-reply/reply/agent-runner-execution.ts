@@ -577,6 +577,8 @@ export async function runAgentTurnWithFallback(params: {
   activeSessionStore?: Record<string, SessionEntry>;
   storePath?: string;
   resolvedVerboseLevel: VerboseLevel;
+  /** Turn id — groups all model.call and tool.call records under the same turn. */
+  turnId?: string;
 }): Promise<AgentRunLoopResult> {
   const TRANSIENT_HTTP_RETRY_DELAY_MS = 2_500;
   let didLogHeartbeatStrip = false;
@@ -970,6 +972,7 @@ export async function runAgentTurnWithFallback(params: {
                 ...senderContext,
                 ...runBaseParams,
                 prompt: params.commandBody,
+                triggerText: params.followupRun.summaryLine,
                 extraSystemPrompt: params.followupRun.run.extraSystemPrompt,
                 toolResultFormat: (() => {
                   const channel = resolveMessageChannel(
@@ -1209,6 +1212,7 @@ export async function runAgentTurnWithFallback(params: {
                       };
                     })()
                   : undefined,
+                turnId: params.turnId,
               });
               bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
                 result.meta?.systemPromptReport,

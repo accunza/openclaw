@@ -211,11 +211,11 @@ describe("installToolResultContextGuard", () => {
     expect(getToolResultText(contextForNextCall[3])).toBe("c".repeat(500));
   });
 
-  it("reduces aggregate tool-result history before preemptive overflow when tool outputs are recoverable", async () => {
+  it("allows more aggregate tool-result history before preemptive overflow", async () => {
     const agent = makeGuardableAgent();
     const contextForNextCall = [
-      makeUser("u".repeat(15_000)),
-      ...Array.from({ length: 60 }, (_, index) =>
+      makeUser("u".repeat(5_000)),
+      ...Array.from({ length: 30 }, (_, index) =>
         makeToolResult(`call_${index + 1}`, String.fromCharCode(97 + (index % 26)).repeat(1_000)),
       ),
     ];
@@ -225,17 +225,11 @@ describe("installToolResultContextGuard", () => {
       contextForNextCall,
       20_000,
     )) as AgentMessage[];
-    const transformedToolTexts = transformed.slice(1).map((msg) => getToolResultText(msg));
-    const transformedToolTotal = transformedToolTexts.reduce((sum, text) => sum + text.length, 0);
 
-    expect(transformed).not.toBe(contextForNextCall);
-    expect(transformedToolTotal).toBeLessThanOrEqual(24_000);
-    expect(
-      transformedToolTexts.some((text) => text.includes(CONTEXT_LIMIT_TRUNCATION_NOTICE)),
-    ).toBe(true);
+    expect(transformed).toBe(contextForNextCall);
     expect(getToolResultText(contextForNextCall[1])).toBe("a".repeat(1_000));
-    expect(getToolResultText(contextForNextCall[60])).toBe(
-      String.fromCharCode(97 + (59 % 26)).repeat(1_000),
+    expect(getToolResultText(contextForNextCall[30])).toBe(
+      String.fromCharCode(97 + (29 % 26)).repeat(1_000),
     );
   });
 

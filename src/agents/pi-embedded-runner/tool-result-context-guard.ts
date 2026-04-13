@@ -140,6 +140,20 @@ function getMinAggregateToolResultChars(): number {
   return formatContextLimitTruncationNotice(1).length;
 }
 
+function calculateAggregateToolResultChars(params: {
+  maxContextChars: number;
+  maxSingleToolResultChars: number;
+  estimatedContextChars: number;
+  toolResultChars: number;
+}): number {
+  const nonToolEstimatedChars = Math.max(0, params.estimatedContextChars - params.toolResultChars);
+  const availableToolChars = params.maxContextChars - nonToolEstimatedChars;
+  if (availableToolChars <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(params.maxSingleToolResultChars, availableToolChars);
+}
+
 function toolResultsNeedTruncation(params: {
   messages: AgentMessage[];
   maxSingleToolResultChars: number;
@@ -289,7 +303,6 @@ export function installToolResultContextGuard(params: {
     Math.floor(contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * PREEMPTIVE_OVERFLOW_RATIO),
   );
   const maxSingleToolResultChars = calculateMaxToolResultChars(contextWindowTokens);
-  const aggregateToolResultChars = maxSingleToolResultChars;
 
   // Agent.transformContext is private in pi-coding-agent, so access it via a
   // narrow runtime view to keep callsites type-safe while preserving behavior.
@@ -303,6 +316,12 @@ export function installToolResultContextGuard(params: {
 
     const sourceMessages = Array.isArray(transformed) ? transformed : messages;
     const preSummary = summarizeToolResultGrowth(sourceMessages);
+    const aggregateToolResultChars = calculateAggregateToolResultChars({
+      maxContextChars,
+      maxSingleToolResultChars,
+      estimatedContextChars: preSummary.estimatedContextChars,
+      toolResultChars: preSummary.toolResultChars,
+    });
     const contextMessages = toolResultsNeedTruncation({
       messages: sourceMessages,
       maxSingleToolResultChars,

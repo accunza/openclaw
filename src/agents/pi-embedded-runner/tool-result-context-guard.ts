@@ -136,25 +136,35 @@ function cloneMessagesForGuard(messages: AgentMessage[]): AgentMessage[] {
   );
 }
 
+function getMinAggregateToolResultChars(): number {
+  return formatContextLimitTruncationNotice(1).length;
+}
+
 function toolResultsNeedTruncation(params: {
   messages: AgentMessage[];
   maxSingleToolResultChars: number;
+  aggregateToolResultChars: number;
 }): boolean {
-  const { messages, maxSingleToolResultChars } = params;
+  const { messages, maxSingleToolResultChars, aggregateToolResultChars } = params;
   const estimateCache = createMessageCharEstimateCache();
+  let totalToolResultChars = 0;
+
   for (const message of messages) {
     if (!isToolResultMessage(message)) {
       continue;
     }
     const rawText = getToolResultText(message);
-    if (rawText && rawText.length > maxSingleToolResultChars) {
+    const rawTextLength = rawText?.length ?? 0;
+    totalToolResultChars += rawTextLength;
+    if (rawTextLength > maxSingleToolResultChars) {
       return true;
     }
     if (estimateMessageCharsCached(message, estimateCache) > maxSingleToolResultChars) {
       return true;
     }
   }
-  return false;
+
+  return totalToolResultChars > aggregateToolResultChars;
 }
 
 function exceedsPreemptiveOverflowThreshold(params: {
@@ -190,16 +200,53 @@ function applyMessageMutationInPlace(
 function enforceToolResultLimitInPlace(params: {
   messages: AgentMessage[];
   maxSingleToolResultChars: number;
+  aggregateToolResultChars: number;
 }): void {
-  const { messages, maxSingleToolResultChars } = params;
+  const { messages, maxSingleToolResultChars, aggregateToolResultChars } = params;
   const estimateCache = createMessageCharEstimateCache();
+  const toolResults: Array<{ index: number; message: AgentMessage; textLength: number }> = [];
+  let totalToolResultChars = 0;
 
-  for (const message of messages) {
+  for (const [index, message] of messages.entries()) {
     if (!isToolResultMessage(message)) {
       continue;
     }
     const truncated = truncateToolResultToChars(message, maxSingleToolResultChars, estimateCache);
     applyMessageMutationInPlace(message, truncated, estimateCache);
+    const textLength = getToolResultText(message)?.length ?? 0;
+    totalToolResultChars += textLength;
+    toolResults.push({ index, message, textLength });
+  }
+
+  if (toolResults.length < 2 || totalToolResultChars <= aggregateToolResultChars) {
+    return;
+  }
+
+  let remainingReduction = totalToolResultChars - aggregateToolResultChars;
+  const minAggregateToolResultChars = getMinAggregateToolResultChars();
+
+  for (const candidate of toolResults.toSorted((a, b) => b.index - a.index)) {
+    if (remainingReduction <= 0) {
+      break;
+    }
+
+    const currentLength = getToolResultText(candidate.message)?.length ?? 0;
+    const reducibleChars = Math.max(0, currentLength - minAggregateToolResultChars);
+    if (reducibleChars <= 0) {
+      continue;
+    }
+
+    const requestedReduction = Math.min(reducibleChars, remainingReduction);
+    const targetChars = Math.max(minAggregateToolResultChars, currentLength - requestedReduction);
+    const truncated = truncateToolResultToChars(candidate.message, targetChars, estimateCache);
+    const newLength = getToolResultText(truncated)?.length ?? 0;
+    const actualReduction = Math.max(0, currentLength - newLength);
+    if (actualReduction <= 0) {
+      continue;
+    }
+
+    applyMessageMutationInPlace(candidate.message, truncated, estimateCache);
+    remainingReduction -= actualReduction;
   }
 }
 
@@ -242,6 +289,7 @@ export function installToolResultContextGuard(params: {
     Math.floor(contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * PREEMPTIVE_OVERFLOW_RATIO),
   );
   const maxSingleToolResultChars = calculateMaxToolResultChars(contextWindowTokens);
+  const aggregateToolResultChars = maxSingleToolResultChars;
 
   // Agent.transformContext is private in pi-coding-agent, so access it via a
   // narrow runtime view to keep callsites type-safe while preserving behavior.
@@ -258,6 +306,7 @@ export function installToolResultContextGuard(params: {
     const contextMessages = toolResultsNeedTruncation({
       messages: sourceMessages,
       maxSingleToolResultChars,
+      aggregateToolResultChars,
     })
       ? cloneMessagesForGuard(sourceMessages)
       : sourceMessages;
@@ -265,6 +314,7 @@ export function installToolResultContextGuard(params: {
       enforceToolResultLimitInPlace({
         messages: contextMessages,
         maxSingleToolResultChars,
+        aggregateToolResultChars,
       });
       {
         const postSummary = summarizeToolResultGrowth(contextMessages);
@@ -280,6 +330,7 @@ export function installToolResultContextGuard(params: {
             estimatedContextCharsBefore: preSummary.estimatedContextChars,
             estimatedContextCharsAfter: postSummary.estimatedContextChars,
             maxSingleToolResultChars,
+            aggregateToolResultChars,
             maxContextChars,
           })}`,
         );
@@ -303,6 +354,7 @@ export function installToolResultContextGuard(params: {
             toolResultChars: thresholdSummary.toolResultChars,
             largestToolResultChars: thresholdSummary.largestToolResultChars,
             maxSingleToolResultChars,
+            aggregateToolResultChars,
           })}`,
         );
       }

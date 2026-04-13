@@ -6,24 +6,16 @@ import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
 import { acquireSessionWriteLock } from "../session-write-lock.js";
 import { log } from "./logger.js";
+import {
+  calculateMaxToolResultChars,
+  DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
+} from "./tool-result-budget-policy.js";
+export {
+  calculateMaxToolResultChars,
+  DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
+} from "./tool-result-budget-policy.js";
 import { formatContextLimitTruncationNotice } from "./tool-result-context-guard.js";
 import { rewriteTranscriptEntriesInSessionManager } from "./transcript-rewrite.js";
-
-/**
- * Maximum share of the context window a single tool result should occupy.
- * This is intentionally conservative – a single tool result should not
- * consume more than 30% of the context window even without other messages.
- */
-const MAX_TOOL_RESULT_CONTEXT_SHARE = 0.3;
-
-/**
- * Default hard cap for a single live tool result text block.
- *
- * Pi already truncates tool results aggressively when serializing old history
- * for compaction summaries. For the live request path we still keep a bounded
- * request-local ceiling so oversized tool output cannot dominate the next turn.
- */
-export const DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS = 40_000;
 
 /**
  * Backwards-compatible alias for older call sites/tests.
@@ -137,20 +129,6 @@ export function truncateToolResultText(
   const keptText = text.slice(0, cutPoint);
   const suffix = suffixFactory(Math.max(1, text.length - keptText.length));
   return keptText + suffix;
-}
-
-/**
- * Calculate the maximum allowed characters for a single tool result
- * based on the model's context window tokens.
- *
- * Uses a rough 4 chars ≈ 1 token heuristic (conservative for English text;
- * actual ratio varies by tokenizer).
- */
-export function calculateMaxToolResultChars(contextWindowTokens: number): number {
-  const maxTokens = Math.floor(contextWindowTokens * MAX_TOOL_RESULT_CONTEXT_SHARE);
-  // Rough conversion: ~4 chars per token on average
-  const maxChars = maxTokens * 4;
-  return Math.min(maxChars, DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS);
 }
 
 /**

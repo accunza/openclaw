@@ -1,8 +1,8 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { log } from "./logger.js";
+import { calculateMaxToolResultChars } from "./tool-result-budget-policy.js";
 import {
   CHARS_PER_TOKEN_ESTIMATE,
-  TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE,
   type MessageCharEstimateCache,
   createMessageCharEstimateCache,
   estimateContextChars,
@@ -12,13 +12,12 @@ import {
   isToolResultMessage,
 } from "./tool-result-char-estimator.js";
 
-const SINGLE_TOOL_RESULT_CONTEXT_SHARE = 0.5;
 const PREEMPTIVE_OVERFLOW_RATIO = 0.9;
 
 export const CONTEXT_LIMIT_TRUNCATION_NOTICE = "more characters truncated";
 export const PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE =
   "Context overflow: estimated context size exceeds safe threshold during tool loop.";
-const TOOL_RESULT_ESTIMATE_TO_TEXT_RATIO = 4 / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE;
+const TOOL_RESULT_ESTIMATE_TO_TEXT_RATIO = 1;
 
 type GuardableTransformContext = (
   messages: AgentMessage[],
@@ -88,12 +87,28 @@ function truncateToolResultToChars(
     return msg;
   }
 
+  const rawText = getToolResultText(msg);
   const estimatedChars = estimateMessageCharsCached(msg, cache);
-  if (estimatedChars <= maxChars) {
+
+  if (rawText && rawText.length <= maxChars && estimatedChars <= maxChars) {
     return msg;
   }
 
-  const rawText = getToolResultText(msg);
+  if (rawText && rawText.length <= maxChars) {
+    const omittedChars = Math.max(
+      1,
+      estimateBudgetToTextBudget(Math.max(estimatedChars - maxChars, 1)),
+    );
+    return replaceToolResultText(
+      msg,
+      `${rawText}${formatContextLimitTruncationNotice(omittedChars)}`,
+    );
+  }
+
+  if (!rawText && estimatedChars <= maxChars) {
+    return msg;
+  }
+
   if (!rawText) {
     const omittedChars = Math.max(
       1,
@@ -130,6 +145,10 @@ function toolResultsNeedTruncation(params: {
   for (const message of messages) {
     if (!isToolResultMessage(message)) {
       continue;
+    }
+    const rawText = getToolResultText(message);
+    if (rawText && rawText.length > maxSingleToolResultChars) {
+      return true;
     }
     if (estimateMessageCharsCached(message, estimateCache) > maxSingleToolResultChars) {
       return true;
@@ -222,12 +241,7 @@ export function installToolResultContextGuard(params: {
     1_024,
     Math.floor(contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * PREEMPTIVE_OVERFLOW_RATIO),
   );
-  const maxSingleToolResultChars = Math.max(
-    1_024,
-    Math.floor(
-      contextWindowTokens * TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE * SINGLE_TOOL_RESULT_CONTEXT_SHARE,
-    ),
-  );
+  const maxSingleToolResultChars = calculateMaxToolResultChars(contextWindowTokens);
 
   // Agent.transformContext is private in pi-coding-agent, so access it via a
   // narrow runtime view to keep callsites type-safe while preserving behavior.

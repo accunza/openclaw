@@ -254,7 +254,7 @@ export function installToolResultContextGuard(params: {
       });
       {
         const postSummary = summarizeToolResultGrowth(contextMessages);
-        log.info(
+        log.debug(
           `[overflow-diag] ${JSON.stringify({
             event: "tool_result_context_growth",
             toolResultCountBefore: preSummary.toolResultCount,

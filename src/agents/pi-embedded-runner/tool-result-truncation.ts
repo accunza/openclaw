@@ -561,7 +561,7 @@ function truncateOversizedToolResultsInExistingSessionManager(params: {
     emitSessionTranscriptUpdate(params.sessionFile);
   }
 
-  log.info(
+  log.debug(
     `[tool-result-truncation] Truncated ${rewriteResult.rewrittenEntries} tool result(s) in session ` +
       `(contextWindow=${contextWindowTokens} maxChars=${maxChars} aggregateBudgetChars=${aggregateBudgetChars} ` +
       `oversized=${plan.oversizedReplacementCount} aggregate=${plan.aggregateReplacementCount}) ` +

@@ -1,23 +1,4 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
-import { log } from "./logger.js";
-
-function summarizeProviderPayload(payload: Record<string, unknown>): {
-  topLevelKeys: string[];
-  messageCount?: number;
-  inputCount?: number;
-  toolCount?: number;
-} {
-  const topLevelKeys = Object.keys(payload).toSorted().slice(0, 24);
-  const messages = Array.isArray(payload.messages) ? payload.messages : undefined;
-  const input = Array.isArray(payload.input) ? payload.input : undefined;
-  const tools = Array.isArray(payload.tools) ? payload.tools : undefined;
-  return {
-    topLevelKeys,
-    messageCount: messages?.length,
-    inputCount: input?.length,
-    toolCount: tools?.length,
-  };
-}
 
 export function streamWithPayloadPatch(
   underlying: StreamFn,
@@ -31,21 +12,7 @@ export function streamWithPayloadPatch(
     ...options,
     onPayload: (payload) => {
       if (payload && typeof payload === "object") {
-        const payloadObj = payload as Record<string, unknown>;
-        patchPayload(payloadObj);
-        {
-          const summary = summarizeProviderPayload(payloadObj);
-          log.info(
-            "[overflow-diag] " +
-              JSON.stringify({
-                event: "provider_payload_prepared",
-                provider: (model as { provider?: unknown }).provider,
-                model: (model as { id?: unknown }).id,
-                modelApi: (model as { api?: unknown }).api,
-                ...summary,
-              }),
-          );
-        }
+        patchPayload(payload as Record<string, unknown>);
       }
       return originalOnPayload?.(payload, model);
     },

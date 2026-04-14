@@ -36,14 +36,7 @@ import {
   type AssistantUsageSnapshot,
   type UsageLike,
 } from "../usage.js";
-import { log } from "./logger.js";
 import { dropThinkingBlocks } from "./thinking.js";
-import {
-  createMessageCharEstimateCache,
-  estimateContextChars,
-  getToolResultText,
-  isToolResultMessage,
-} from "./tool-result-char-estimator.js";
 
 const INTER_SESSION_PREFIX_BASE = "[Inter-session message]";
 const MODEL_SNAPSHOT_CUSTOM_TYPE = "model-snapshot";
@@ -54,29 +47,6 @@ type ModelSnapshotEntry = {
   modelApi?: string | null;
   modelId?: string;
 };
-
-function summarizeReplayMessages(messages: AgentMessage[]): {
-  messageCount: number;
-  estimatedContextChars: number;
-  toolResultCount: number;
-  toolResultTextChars: number;
-} {
-  let toolResultCount = 0;
-  let toolResultTextChars = 0;
-  for (const msg of messages) {
-    if (!isToolResultMessage(msg)) {
-      continue;
-    }
-    toolResultCount += 1;
-    toolResultTextChars += getToolResultText(msg)?.length ?? 0;
-  }
-  return {
-    messageCount: messages.length,
-    estimatedContextChars: estimateContextChars(messages, createMessageCharEstimateCache()),
-    toolResultCount,
-    toolResultTextChars,
-  };
-}
 
 function buildInterSessionPrefix(message: AgentMessage): string {
   const provenance = normalizeInputProvenance((message as { provenance?: unknown }).provenance);
@@ -429,7 +399,6 @@ export async function sanitizeSessionHistory(params: {
       env: params.env,
       model: params.model,
     });
-  const beforeSummary = summarizeReplayMessages(params.messages);
   const withInterSessionMarkers = annotateInterSessionUserMessages(params.messages);
   const sanitizedImages = await sanitizeSessionMessagesImages(
     withInterSessionMarkers,
@@ -503,29 +472,6 @@ export async function sanitizeSessionHistory(params: {
         })
       : undefined;
   const sanitizedWithProvider = providerSanitized ?? sanitizedOpenAI;
-  {
-    const afterSummary = summarizeReplayMessages(sanitizedWithProvider);
-    log.info(
-      "[overflow-diag] " +
-        JSON.stringify({
-          event: "replay_sanitization",
-          provider: params.provider,
-          model: params.modelId,
-          modelApi: params.modelApi,
-          beforeMessageCount: beforeSummary.messageCount,
-          afterMessageCount: afterSummary.messageCount,
-          beforeEstimatedContextChars: beforeSummary.estimatedContextChars,
-          afterEstimatedContextChars: afterSummary.estimatedContextChars,
-          beforeToolResultCount: beforeSummary.toolResultCount,
-          afterToolResultCount: afterSummary.toolResultCount,
-          beforeToolResultTextChars: beforeSummary.toolResultTextChars,
-          afterToolResultTextChars: afterSummary.toolResultTextChars,
-          droppedThinkingBlocks: policy.dropThinkingBlocks,
-          repairedToolUseResultPairing: policy.repairToolUseResultPairing,
-          providerReplaySanitized: Boolean(providerSanitized),
-        }),
-    );
-  }
 
   if (hasSnapshot && (!priorSnapshot || modelChanged)) {
     appendModelSnapshot(params.sessionManager, {

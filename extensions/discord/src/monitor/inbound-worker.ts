@@ -9,6 +9,10 @@ import {
   DiscordRetryableInboundError,
   releaseDiscordInboundReplay,
 } from "./inbound-dedupe.js";
+import {
+  logDiscordInboundWorkerStart,
+  logDiscordReplyOutcome,
+} from "./inbound-diagnostic.js";
 import { materializeDiscordInboundJob, type DiscordInboundJob } from "./inbound-job.js";
 import type { RuntimeEnv } from "./message-handler.preflight.types.js";
 import { processDiscordMessage } from "./message-handler.process.js";
@@ -60,9 +64,18 @@ async function processDiscordInboundJob(params: {
   const timeoutMs = normalizeDiscordInboundWorkerTimeoutMs(params.runTimeoutMs);
   const contextSuffix = formatDiscordRunContextSuffix(params.job);
   let finalReplyStarted = false;
+  let replyDelivered = false;
+  let timedOut = false;
   let createdThreadId: string | undefined;
   let sessionKey: string | undefined;
   const processDiscordMessageImpl = params.testing?.processDiscordMessage ?? processDiscordMessage;
+  logDiscordInboundWorkerStart({
+    accountId: params.job.payload.accountId,
+    channelId: params.job.payload.messageChannelId,
+    messageId: params.job.payload.data?.message?.id,
+    queueKey: params.job.queueKey,
+    sessionKey: params.job.payload.route.sessionKey ?? params.job.payload.baseSessionKey,
+  });
   try {
     await runDiscordTaskWithTimeout({
       run: async (abortSignal) => {
@@ -72,6 +85,7 @@ async function processDiscordInboundJob(params: {
           },
           onFinalReplyDelivered: () => {
             finalReplyStarted = true;
+            replyDelivered = true;
           },
           onReplyPlanResolved: (resolved) => {
             createdThreadId = normalizeOptionalString(resolved.createdThreadId);
@@ -82,6 +96,7 @@ async function processDiscordInboundJob(params: {
       timeoutMs,
       abortSignals: [params.job.runtime.abortSignal, params.lifecycleSignal],
       onTimeout: async (resolvedTimeoutMs) => {
+        timedOut = true;
         params.runtime.error?.(
           danger(
             `discord inbound worker timed out after ${formatDurationSeconds(resolvedTimeoutMs, {
@@ -90,6 +105,17 @@ async function processDiscordInboundJob(params: {
             })}${contextSuffix}`,
           ),
         );
+        logDiscordReplyOutcome({
+          accountId: params.job.payload.accountId,
+          channelId: params.job.payload.messageChannelId,
+          messageId: params.job.payload.data?.message?.id,
+          sessionKey:
+            sessionKey ??
+            params.job.payload.route.sessionKey ??
+            params.job.payload.baseSessionKey,
+          createdThreadId,
+          outcome: finalReplyStarted ? "timeout_after_start" : "timeout",
+        });
         if (finalReplyStarted) {
           return;
         }
@@ -108,6 +134,19 @@ async function processDiscordInboundJob(params: {
         );
       },
     });
+    if (!timedOut) {
+      logDiscordReplyOutcome({
+        accountId: params.job.payload.accountId,
+        channelId: params.job.payload.messageChannelId,
+        messageId: params.job.payload.data?.message?.id,
+        sessionKey:
+          sessionKey ??
+          params.job.payload.route.sessionKey ??
+          params.job.payload.baseSessionKey,
+        createdThreadId,
+        outcome: replyDelivered ? "delivered" : finalReplyStarted ? "started_only" : "none",
+      });
+    }
     await commitDiscordInboundReplay({
       replayKeys: params.job.replayKeys,
       replayGuard: params.replayGuard,
@@ -123,6 +162,19 @@ async function processDiscordInboundJob(params: {
       await commitDiscordInboundReplay({
         replayKeys: params.job.replayKeys,
         replayGuard: params.replayGuard,
+      });
+    }
+    if (!timedOut) {
+      logDiscordReplyOutcome({
+        accountId: params.job.payload.accountId,
+        channelId: params.job.payload.messageChannelId,
+        messageId: params.job.payload.data?.message?.id,
+        sessionKey:
+          sessionKey ??
+          params.job.payload.route.sessionKey ??
+          params.job.payload.baseSessionKey,
+        createdThreadId,
+        outcome: "error",
       });
     }
     throw error;

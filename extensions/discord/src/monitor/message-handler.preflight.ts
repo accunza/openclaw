@@ -53,6 +53,7 @@ import {
   resolveDiscordConversationRoute,
   resolveDiscordEffectiveRoute,
 } from "./route-resolution.js";
+import { logDiscordRouteResolved } from "./inbound-diagnostic.js";
 import { resolveDiscordSenderIdentity, resolveDiscordWebhookId } from "./sender-identity.js";
 import { isRecentlyUnboundThreadWebhookMessage } from "./thread-bindings.js";
 
@@ -673,6 +674,14 @@ export async function preflightDiscordMessage(
     boundSessionKey,
     configuredRoute,
     matchedBy: "binding.channel",
+  });
+  logDiscordRouteResolved({
+    accountId: params.accountId,
+    channelId: messageChannelId,
+    messageId: message.id,
+    route: effectiveRoute,
+    routeKind: isDirectMessage ? "direct" : isGroupDm ? "group" : "channel",
+    boundSessionKey,
   });
   const boundAgentId = boundSessionKey ? effectiveRoute.agentId : undefined;
   const isBoundThreadSession = Boolean(threadBinding && earlyThreadChannel);

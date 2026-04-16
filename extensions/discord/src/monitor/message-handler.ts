@@ -27,6 +27,7 @@ import {
   resolveDiscordMessageChannelId,
   resolveDiscordMessageText,
 } from "./message-utils.js";
+import { logDiscordInboundIngress } from "./inbound-diagnostic.js";
 import type { DiscordMonitorStatusSink } from "./status.js";
 
 type DiscordMessageHandlerParams = Omit<
@@ -234,6 +235,18 @@ export function createDiscordMessageHandler(
       ) {
         return;
       }
+      logDiscordInboundIngress({
+        accountId: params.accountId,
+        channelId:
+          resolveDiscordMessageChannelId({
+            message: data.message,
+            eventChannelId: data.channel_id,
+          }) ?? data.channel_id,
+        messageId: data.message?.id,
+        guildId: data.guild_id,
+        authorId: data.author?.id,
+        isBotAuthor: data.author?.bot,
+      });
 
       await debouncer.enqueue({
         data,
